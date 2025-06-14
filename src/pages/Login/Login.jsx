@@ -22,7 +22,7 @@ const Login = () => {
     <div className='login'>
       
       <video className="background-video" autoPlay loop muted>
-        <source src="public/backgroundVideo.mp4" type="video/mp4" />
+        <source src="/backgroundVideo.mp4" type="video/mp4" />
         Your browser does not support the video tag.
       </video>
 
