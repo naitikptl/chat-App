@@ -21,7 +21,14 @@ const Login = () => {
   return (
     <div className='login'>
       
-      <video className="background-video" autoPlay loop muted>
+      <video 
+        className="background-video" 
+        autoPlay 
+        loop 
+        muted 
+        playsInline
+        poster="/background.png"
+      >
         <source src="/backgroundVideo.mp4" type="video/mp4" />
         Your browser does not support the video tag.
       </video>
