@@ -8,6 +8,7 @@ import { toast } from 'react-toastify';
 import upload from '../../lib/upload';
 import VideoChat from './VideoChat';
 import EmojiPicker from 'emoji-picker-react';
+import VoiceChat from './VoiceChat';
 
 const ChatBox = () => {
 
@@ -22,6 +23,9 @@ const ChatBox = () => {
   const longPressTimer = useRef(null);
   const scrollEnd = useRef();
   const emojiPickerRef = useRef(null);
+  const [isVoiceCallActive, setIsVoiceCallActive] = useState(false);
+  const [callType, setCallType] = useState(null); // 'video' or 'voice'
+  const [previewImage, setPreviewImage] = useState(null);
 
   const sendMessage = async () => {
 
@@ -248,6 +252,64 @@ const ChatBox = () => {
     }
   };
 
+  const startVoiceCall = async () => {
+    try {
+      setIsVoiceCallActive(true);
+      setCallType('voice');
+      setCallStatus('calling');
+      
+      // Add call notification message
+      await updateDoc(doc(db, "messages", messagesId), {
+        messages: arrayUnion({
+          sId: userData.id,
+          text: "📞 Started a voice call",
+          createdAt: new Date(),
+          type: 'call_notification'
+        })
+      });
+
+      // Update chat with call status
+      const userIDs = [chatUser.rId, userData.id];
+      userIDs.forEach(async (id) => {
+        const userChatsRef = doc(db, "chats", id);
+        const userChatsSnapshot = await getDoc(userChatsRef);
+
+        if (userChatsSnapshot.exists()) {
+          const userChatsData = userChatsSnapshot.data();
+          const chatIndex = userChatsData.chatsData.findIndex((c) => c.messageId === messagesId);
+          userChatsData.chatsData[chatIndex].lastMessage = "📞 Voice call";
+          userChatsData.chatsData[chatIndex].updatedAt = Date.now();
+          await updateDoc(userChatsRef, {
+            chatsData: userChatsData.chatsData,
+          });
+        }
+      });
+    } catch (error) {
+      toast.error(error.message);
+    }
+  };
+
+  const endCall = async () => {
+    try {
+      setIsVoiceCallActive(false);
+      setIsVideoCallActive(false);
+      setCallStatus('ended');
+      setCallType(null);
+      
+      // Add call ended notification
+      await updateDoc(doc(db, "messages", messagesId), {
+        messages: arrayUnion({
+          sId: userData.id,
+          text: "📞 Call ended",
+          createdAt: new Date(),
+          type: 'call_notification'
+        })
+      });
+    } catch (error) {
+      toast.error(error.message);
+    }
+  };
+
   const onEmojiClick = (emojiObject) => {
     setInput(prev => prev + emojiObject.emoji);
   };
@@ -284,7 +346,14 @@ const ChatBox = () => {
     }
     
     if (msg["image"]) {
-      return <img className='msg-img' src={msg["image"]} alt="" />;
+      return (
+        <img 
+          className='msg-img' 
+          src={msg["image"]} 
+          alt="" 
+          onClick={() => setPreviewImage(msg["image"])}
+        />
+      );
     }
     
     if (isEmojiOnly(msg["text"])) {
@@ -296,104 +365,108 @@ const ChatBox = () => {
 
   return (
     <>
-      {isVideoCallActive ? (
-        <div className="video-call-container">
-          <VideoChat
-            isCaller={true}
-            onEndCall={endVideoCall}
-            remoteUserId={chatUser?.rId}
-          />
-          <div className="call-status-overlay">
-            {callStatus === 'calling' && (
-              <div className="calling-status">
-                <div className="calling-animation"></div>
-                <p>Calling {chatUser?.userData.name}...</p>
-              </div>
-            )}
-          </div>
+      {previewImage && (
+        <div className="image-preview" onClick={() => setPreviewImage(null)}>
+          <img src={previewImage} alt="" />
         </div>
-      ) : (
-        chatUser ? (
-          <div className={`chat-box ${chatVisible ? "" : "hidden"}`}>
-            <div className="chat-user">
-              <img src={chatUser ? chatUser.userData.avatar : assets.profile_img} alt="" />
-              <p>{chatUser ? chatUser.userData.name : "Richard Sanford"} {Date.now() - chatUser.userData.lastSeen <= 70000 ? <img className='dot' src={assets.green_dot} alt='' /> : null}</p>
-              <img onClick={()=>setChatVisible(false)} className='arrow' src={assets.arrow_icon} alt="" />
+      )}
+      {isVoiceCallActive ? (
+        <VoiceChat
+          isCaller={true}
+          onEndCall={endCall}
+          remoteUserId={chatUser?.rId}
+        />
+      ) : isVideoCallActive ? (
+        <VideoChat
+          isCaller={true}
+          onEndCall={endCall}
+          remoteUserId={chatUser?.rId}
+        />
+      ) : chatUser ? (
+        <div className={`chat-box ${chatVisible ? "" : "hidden"}`}>
+          <div className="chat-user">
+            <img src={chatUser ? chatUser.userData.avatar : assets.profile_img} alt="" />
+            <p>{chatUser ? chatUser.userData.name : "Richard Sanford"} {Date.now() - chatUser.userData.lastSeen <= 70000 ? <img className='dot' src={assets.green_dot} alt='' /> : null}</p>
+            <img onClick={()=>setChatVisible(false)} className='arrow' src={assets.arrow_icon} alt="" />
+            <div className="call-buttons">
+              <button onClick={startVoiceCall} className="voice-call-btn">
+                📞
+              </button>
               <button onClick={startVideoCall} className="video-call-btn">
                 📹
               </button>
-              <img className='help' src={assets.help_icon} alt="" />
             </div>
-            {isSelectionMode && (
-              <div className="selection-toolbar">
-                <span>{selectedMessages.length} selected</span>
-                <button onClick={deleteSelectedMessages} className="delete-selected-btn">
-                  Delete Selected
-                </button>
-                <button onClick={cancelSelection} className="cancel-selection-btn">
-                  Cancel
-                </button>
-              </div>
-            )}
-            <div className="chat-msg">
-              <div ref={scrollEnd}></div>
-              {
-                messages.map((msg, index) => {
-                  return (
-                    <div 
-                      key={index} 
-                      className={`${msg.sId === userData.id ? "s-msg" : "r-msg"} ${selectedMessages.includes(index) ? "selected" : ""}`}
-                      onMouseDown={() => handleMessagePress(msg, index)}
-                      onMouseUp={handleMessageRelease}
-                      onMouseLeave={handleMessageRelease}
-                      onTouchStart={() => handleMessagePress(msg, index)}
-                      onTouchEnd={handleMessageRelease}
-                      onClick={() => toggleMessageSelection(index)}
-                    >
-                      <div className="message-content">
-                        {renderMessageContent(msg)}
-                      </div>
-                      <div>
-                        <img src={msg.sId === userData.id ? userData.avatar : chatUser.userData.avatar} alt="" />
-                        <p>{convertTimestamp(msg.createdAt)}</p>
-                      </div>
+            <img className='help' src={assets.help_icon} alt="" />
+          </div>
+          {isSelectionMode && (
+            <div className="selection-toolbar">
+              <span>{selectedMessages.length} selected</span>
+              <button onClick={deleteSelectedMessages} className="delete-selected-btn">
+                Delete Selected
+              </button>
+              <button onClick={cancelSelection} className="cancel-selection-btn">
+                Cancel
+              </button>
+            </div>
+          )}
+          <div className="chat-msg">
+            <div ref={scrollEnd}></div>
+            {
+              messages.map((msg, index) => {
+                return (
+                  <div 
+                    key={index} 
+                    className={`${msg.sId === userData.id ? "s-msg" : "r-msg"} ${selectedMessages.includes(index) ? "selected" : ""}`}
+                    onMouseDown={() => handleMessagePress(msg, index)}
+                    onMouseUp={handleMessageRelease}
+                    onMouseLeave={handleMessageRelease}
+                    onTouchStart={() => handleMessagePress(msg, index)}
+                    onTouchEnd={handleMessageRelease}
+                    onClick={() => toggleMessageSelection(index)}
+                  >
+                    <div className="message-content">
+                      {renderMessageContent(msg)}
                     </div>
-                  )
-                })
-              }
-            </div>
-            <div className="chat-input">
-              <div className="emoji-picker-container" ref={emojiPickerRef}>
-                <button 
-                  className="emoji-button"
-                  onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                >
-                  😊
-                </button>
-                {showEmojiPicker && (
-                  <div className="emoji-picker-wrapper">
-                    <EmojiPicker
-                      onEmojiClick={onEmojiClick}
-                      width={300}
-                      height={400}
-                    />
+                    <div>
+                      <img src={msg.sId === userData.id ? userData.avatar : chatUser.userData.avatar} alt="" />
+                      <p>{convertTimestamp(msg.createdAt)}</p>
+                    </div>
                   </div>
-                )}
-              </div>
-              <input onKeyDown={(e) => e.key === "Enter" ? sendMessage() : null} onChange={(e) => setInput(e.target.value)} value={input} type="text" placeholder='Send a message' />
-              <input onChange={sendImage} type="file" id='image' accept="image/png, image/jpeg" hidden />
-              <label htmlFor="image">
-                <img src={assets.gallery_icon} alt="" />
-              </label>
-              <img onClick={sendMessage} src={assets.send_button} alt="" />
+                )
+              })
+            }
+          </div>
+          <div className="chat-input">
+            <div className="emoji-picker-container" ref={emojiPickerRef}>
+              <button 
+                className="emoji-button"
+                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+              >
+                😊
+              </button>
+              {showEmojiPicker && (
+                <div className="emoji-picker-wrapper">
+                  <EmojiPicker
+                    onEmojiClick={onEmojiClick}
+                    width={300}
+                    height={400}
+                  />
+                </div>
+              )}
             </div>
+            <input onKeyDown={(e) => e.key === "Enter" ? sendMessage() : null} onChange={(e) => setInput(e.target.value)} value={input} type="text" placeholder='Send a message' />
+            <input onChange={sendImage} type="file" id='image' accept="image/png, image/jpeg" hidden />
+            <label htmlFor="image">
+              <img src={assets.gallery_icon} alt="" />
+            </label>
+            <img onClick={sendMessage} src={assets.send_button} alt="" />
           </div>
-        ) : (
-          <div className={`chat-welcome ${chatVisible ? "" : "hidden"}`}>
-            <img src={assets.logo_icon} alt=''/>
-            <p>Chat anytime, anywhere</p>
-          </div>
-        )
+        </div>
+      ) : (
+        <div className={`chat-welcome ${chatVisible ? "" : "hidden"}`}>
+          <img src={assets.logo_icon} alt=''/>
+          <p>Chat anytime, anywhere</p>
+        </div>
       )}
     </>
   )
